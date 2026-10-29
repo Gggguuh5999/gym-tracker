@@ -51,132 +51,167 @@ h2{font-size:17px;margin:22px 0 2px}
 .foot{margin-top:24px}
 .foot .btn{flex:1}
 .foot+.hint{margin-top:10px}
+textarea{font:inherit;color:inherit;background:var(--field);border:1px solid var(--line);border-radius:10px;padding:10px 14px;width:100%;min-height:120px;resize:vertical;line-height:1.6}
+textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.login{text-align:center;padding-top:18vh}
+.login h1{font-size:28px;margin:0 0 6px}
+.login .btn{width:100%;margin-top:16px}
+.diet{white-space:pre-wrap;display:block}
+.toast{position:fixed;inset-inline:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:528px;margin:0 auto;background:var(--ink);color:var(--bg);padding:12px 14px;border-radius:10px;text-align:center;font-weight:600;z-index:20}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<script>
-var KEY='gymlog.v1',db={clients:[]},storeOK=true,note='';
-var inApp=/FBAN|FBAV|Instagram|WhatsApp|Telegram|Messenger|Line\/|; wv\)/i.test(navigator.userAgent);
-try{localStorage.setItem('_t','1');localStorage.removeItem('_t')}catch(e){storeOK=false}
-if(storeOK){try{var s=localStorage.getItem(KEY);if(s)db=JSON.parse(s);if(!db||!Array.isArray(db.clients))db={clients:[]}}catch(e){db={clients:[]}}}
-try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
-function save(){if(!storeOK)return;try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){storeOK=false}}
-var view=null,q='',adding=false,armed=null,draft={ex:'',w:'',r:''};
-var app=document.getElementById('app');
-var $=function(x){return document.querySelector(x)};
-var PL=[['#C8102E','#fff'],['#1D4ED8','#fff'],['#F2B705','#18212B'],['#1B8A4B','#fff'],['#CBD2D9','#18212B']];
-function esc(s){return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
-function cur(){return db.clients.find(function(c){return c.id===view})}
-function dkey(t){var d=new Date(t);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
-function diff(t){return Math.round((new Date(dkey(Date.now()))-new Date(dkey(t)))/864e5)}
-function ago(t){var n=diff(t);return n<1?'النهارده':n===1?'امبارح':n===2?'من يومين':n<=10?'من '+n+' أيام':'من '+n+' يوم'}
-function dlabel(t){var n=diff(t);if(n<1)return'النهارده';if(n===1)return'امبارح';try{return new Date(t).toLocaleDateString('ar-EG-u-nu-latn',{day:'numeric',month:'long'})}catch(e){return dkey(t)}}
-function plate(c,sm){var p=PL[c.pi%5];return'<span class="plate'+(sm?' sm':'')+'" aria-hidden="true" style="background:'+p[0]+';color:'+p[1]+'">'+esc(Array.from(c.name)[0])+'</span>'}
+<div id="toast" class="toast" hidden></div>
+<script type="module">
+import * as A from "https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js";
+import * as Au from "https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js";
+import * as F from "https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js";
 
-function warn(){
-  var m=!storeOK?'الحفظ مش شغال بالطريقة اللي فتحت بيها الصفحة، فأي حاجة تسجّلها هتضيع لما تخرج. افتح اللينك من Chrome أو Safari، مش كملف ومش من جوه واتساب.':inApp?'إنت فاتح من جوه تطبيق، والمتصفح الداخلي ممكن يمسح الداتا. افتح اللينك من Chrome أو Safari.':'';
-  return(m?'<div class="warn">'+m+'</div>':'')+(note?'<div class="warn">'+esc(note)+'</div>':'');
+const cfg={apiKey:"AIzaSyBOuvil6rDLK1XKbVDAnYWmOpyS2downvY",authDomain:"gym-tracker-50069.firebaseapp.com",projectId:"gym-tracker-50069",storageBucket:"gym-tracker-50069.firebasestorage.app",messagingSenderId:"252222210634",appId:"1:252222210634:web:03beb69e982eddf9565cb3"};
+const fb=A.initializeApp(cfg),auth=Au.getAuth(fb);
+let db;
+try{db=F.initializeFirestore(fb,{localCache:F.persistentLocalCache({tabManager:F.persistentMultipleTabManager()})})}catch(e){db=F.getFirestore(fb)}
+
+const app=document.getElementById('app'),$=x=>document.querySelector(x);
+const inApp=/FBAN|FBAV|Instagram|WhatsApp|Telegram|Messenger|Line\/|; wv\)/i.test(navigator.userAgent);
+const PL=[['#C8102E','#fff'],['#1D4ED8','#fff'],['#F2B705','#18212B'],['#1B8A4B','#fff'],['#CBD2D9','#18212B']];
+let user=null,ready=false,role=null,clients=[],mine=null,unsub=null;
+let view=null,q='',adding=false,armed=null,err='',draft={ex:'',w:'',r:''};
+
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const cur=()=>clients.find(c=>c.id===view);
+const sets=c=>Array.isArray(c.sets)?c.sets:[];
+const dkey=t=>{const d=new Date(t);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const diff=t=>Math.round((new Date(dkey(Date.now()))-new Date(dkey(t)))/864e5);
+const ago=t=>{const n=diff(t);return n<1?'النهارده':n===1?'امبارح':n===2?'من يومين':n<=10?`من ${n} أيام`:`من ${n} يوم`};
+const dlabel=t=>{const n=diff(t);if(n<1)return'النهارده';if(n===1)return'امبارح';try{return new Date(t).toLocaleDateString('ar-EG-u-nu-latn',{day:'numeric',month:'long'})}catch(e){return dkey(t)}};
+const plate=(c,sm)=>{const ch=Array.from(c.name||'?'),p=PL[ch.reduce((a,x)=>a+x.charCodeAt(0),0)%5];return`<span class="plate${sm?' sm':''}" aria-hidden="true" style="background:${p[0]};color:${p[1]}">${esc(ch[0])}</span>`};
+const msg=e=>e.code==='permission-denied'?'مفيش صلاحية. تأكد إن قواعد الأمان اتنشرت وإن الإيميل ده مضاف فيها.':e.code==='unavailable'?'مفيش اتصال بالإنترنت دلوقتي.':'حصل خطأ: '+(e.code||e.message);
+const box=()=>err?`<div class="warn">${esc(err)}</div>`:'';
+const fail=x=>{err=msg(x);paint()};
+let tt;const say=t=>{const e=$('#toast');e.textContent=t;e.hidden=false;clearTimeout(tt);tt=setTimeout(()=>{e.hidden=true},1600)};
+const top=(h,l='',r='')=>`<header class="top">${l}<h1>${h}</h1>${r}</header>`;
+const foot=()=>`<div class="row foot"><button class="btn ghost" data-act="out">خروج</button></div><p class="hint"><bdi dir="ltr">${esc(user.email)}</bdi></p>`;
+const exList=()=>[...new Set(clients.flatMap(c=>sets(c).map(s=>s.ex)))];
+
+function group(ss){
+  const days=[];
+  ss.slice().reverse().forEach(s=>{
+    const k=dkey(s.t);let d=days.find(x=>x.k===k);if(!d)days.push(d={k,t:s.t,ex:[]});
+    let e=d.ex.find(x=>x.n===s.ex);if(!e)d.ex.push(e={n:s.ex,s:[]});e.s.unshift(s);
+  });
+  return days;
 }
-function paint(){var y=window.scrollY;view===null?pList():pClient();note='';window.scrollTo(0,y)}
+const hist=(days,del)=>days.length?days.map(d=>`<div class="day">${dlabel(d.t)}</div>`+d.ex.map(e=>`<section class="ex"><b>${esc(e.n)}</b><div class="chips">`+e.s.map(s=>{const a=armed===s.id;return`<span class="chip${a?' arm':''}"><bdi dir="ltr">${s.w} × ${s.r}</bdi>${del?`<button data-act="del" data-id="${s.id}" aria-label="حذف">${a?'تأكيد الحذف':'×'}</button>`:''}</span>`}).join('')+`</div></section>`).join('')).join(''):'<p class="empty">لسه مفيش تمارين متسجّلة.</p>';
+
+function stop(){if(unsub){unsub();unsub=null}}
+function start(){
+  stop();role=null;
+  const col=F.collection(db,'clients');
+  unsub=F.onSnapshot(col,s=>{role='trainer';clients=s.docs.map(d=>({id:d.id,...d.data()}));upd()},e=>{
+    if(e.code!=='permission-denied')return fail(e);
+    stop();
+    unsub=F.onSnapshot(F.query(col,F.where('email','==',user.email)),s=>{role='client';const d=s.docs[0];mine=d?{id:d.id,...d.data()}:null;upd()},fail);
+  });
+}
+function upd(){
+  const a=document.activeElement;
+  if(a&&/INPUT|TEXTAREA/.test(a.tagName)&&role==='trainer'&&view!==null)return;
+  paint();
+}
+Au.onAuthStateChanged(auth,u=>{user=u;ready=true;stop();role=null;clients=[];mine=null;view=null;err='';if(u)start();paint()});
+
+function paint(){
+  const y=window.scrollY;
+  if(!ready)app.innerHTML='<p class="empty">جاري التحميل…</p>';
+  else if(!user)pLogin();
+  else if(!role)app.innerHTML=top('متابعة العملاء')+`<main class="wrap">${box()}<p class="empty">جاري تحميل البيانات…</p>${foot()}</main>`;
+  else if(role==='client')pMine();
+  else if(view===null)pList();
+  else pClient();
+  window.scrollTo(0,y);
+}
+
+function pLogin(){
+  app.innerHTML=`<main class="wrap login"><h1>متابعة العملاء</h1><p class="hint">سجّل دخول بحساب Google عشان تشوف بياناتك.</p>${inApp?'<div class="warn">إنت فاتح من جوه تطبيق، وجوجل بتمنع تسجيل الدخول من هناك. افتح اللينك من Chrome أو Safari.</div>':''}${box()}<button class="btn" data-act="login">دخول بحساب Google</button></main>`;
+}
+
+function pMine(){
+  if(!mine){app.innerHTML=top('متابعة العملاء')+`<main class="wrap">${box()}<p class="empty">مفيش بيانات مرتبطة بالإيميل ده لسه. ابعته لمدربك عشان يضيفه:<br><bdi dir="ltr">${esc(user.email)}</bdi></p>${foot()}</main>`;return}
+  app.innerHTML=top(esc(mine.name),plate(mine,1))+`<main class="wrap">${box()}<h2>تمارينك</h2><p class="hint">الوزن × العدّات</p>${hist(group(sets(mine)),false)}<h2>الدايت</h2><div class="card diet">${mine.diet?esc(mine.diet):'لسه مفيش دايت متسجّل.'}</div>${foot()}</main>`;
+}
 
 function pList(){
-  app.innerHTML='<header class="top"><h1>العملاء</h1><span class="count">'+db.clients.length+' عميل</span><button class="btn" data-act="toggle">'+(adding?'إلغاء':'عميل جديد')+'</button></header><main class="wrap">'+warn()
-  +(adding?'<form class="card" data-form="addc"><label for="nn">اسم العميل</label><div class="row"><input id="nn" autocomplete="off" maxlength="40" required><button class="btn">إضافة</button></div></form>':'')
-  +(db.clients.length?'<input id="q" type="search" placeholder="دوّر على عميل" aria-label="بحث" value="'+esc(q)+'">':'')
-  +'<div id="cl"></div><div class="row foot"><button class="btn ghost" data-act="exp">نسخة احتياطية</button><button class="btn ghost" data-act="imp">استرجاع نسخة</button><input id="imp" type="file" accept="application/json,.json" hidden></div>'+(db.clients.length?'<p class="hint">الداتا محفوظة على الموبايل ده بس، فخد نسخة احتياطية كل فترة.</p>':'')+'</main>';
+  app.innerHTML=top('العملاء','',`<span class="count">${clients.length} عميل</span><button class="btn" data-act="toggle">${adding?'إلغاء':'عميل جديد'}</button>`)+`<main class="wrap">${box()}`
+  +(adding?`<form class="card" data-form="addc"><div><label for="nn">اسم العميل</label><input id="nn" autocomplete="off" maxlength="40" required></div><div><label for="ne">Gmail العميل (عشان يدخل ويشوف داتاه)</label><input id="ne" type="email" inputmode="email" dir="ltr" autocomplete="off"></div><button class="btn">إضافة</button></form>`:'')
+  +(clients.length?`<input id="q" type="search" placeholder="دوّر على عميل" aria-label="بحث" value="${esc(q)}">`:'')
+  +`<div id="cl"></div>${foot()}</main>`;
   fillList();
   if(adding)$('#nn').focus();
 }
 function fillList(){
-  var t=q.trim().toLowerCase();
-  var cs=db.clients.filter(function(c){return c.name.toLowerCase().includes(t)}).sort(function(a,b){return a.name.localeCompare(b.name,'ar')});
-  $('#cl').innerHTML=cs.length?cs.map(function(c){
-    var l=c.sets[c.sets.length-1];
-    return'<button class="client" data-act="open" data-id="'+c.id+'">'+plate(c)+'<span class="info"><span class="name">'+esc(c.name)+'</span><span class="sub">'+(l?esc(l.ex)+' <bdi dir="ltr">'+l.w+' × '+l.r+'</bdi><span class="when">'+ago(l.t)+'</span>':'لسه مفيش تسجيل')+'</span></span></button>'
-  }).join(''):'<p class="empty">'+(db.clients.length?'مفيش عميل بالاسم ده.':'لسه مفيش عملاء. دوس على «عميل جديد» وضيف أول واحد.')+'</p>';
+  const t=q.trim().toLowerCase();
+  const cs=clients.filter(c=>(c.name||'').toLowerCase().includes(t)).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  $('#cl').innerHTML=cs.length?cs.map(c=>{
+    const l=sets(c).slice(-1)[0];
+    return`<button class="client" data-act="open" data-id="${c.id}">${plate(c)}<span class="info"><span class="name">${esc(c.name)}</span><span class="sub">${l?`${esc(l.ex)} <bdi dir="ltr">${l.w} × ${l.r}</bdi><span class="when">${ago(l.t)}</span>`:'لسه مفيش تسجيل'}${c.email?'':'<span class="when">من غير Gmail</span>'}</span></span></button>`;
+  }).join(''):`<p class="empty">${clients.length?'مفيش عميل بالاسم ده.':'لسه مفيش عملاء. دوس على «عميل جديد» وضيف أول واحد.'}</p>`;
 }
 
 function pClient(){
-  var c=cur();if(!c){view=null;return pList()}
-  var exs=[];db.clients.forEach(function(x){x.sets.forEach(function(s){if(exs.indexOf(s.ex)<0)exs.push(s.ex)})});
-  var days=[];
-  c.sets.slice().reverse().forEach(function(s){
-    var k=dkey(s.t),d=days.find(function(x){return x.k===k});
-    if(!d)days.push(d={k:k,t:s.t,ex:[]});
-    var e=d.ex.find(function(x){return x.n===s.ex});
-    if(!e)d.ex.push(e={n:s.ex,s:[]});
-    e.s.unshift(s);
-  });
-  app.innerHTML='<header class="top"><button class="btn ghost" data-act="back">رجوع</button>'+plate(c,1)+'<h1>'+esc(c.name)+'</h1></header><main class="wrap">'+warn()
-  +'<form class="card" data-form="addset"><div><label for="ex">التمرين</label><input id="ex" list="exl" autocomplete="off" maxlength="40" required value="'+esc(draft.ex)+'"><datalist id="exl">'+exs.map(function(e){return'<option value="'+esc(e)+'">'}).join('')+'</datalist></div>'
-  +'<div class="two"><div><label for="w">الوزن (كجم)</label><input id="w" type="number" inputmode="decimal" step="any" min="0" required value="'+esc(draft.w)+'"></div>'
-  +'<div><label for="r">العدّات</label><input id="r" type="number" inputmode="numeric" step="1" min="1" required value="'+esc(draft.r)+'"></div></div>'
-  +'<button class="btn" id="sv">سجّل</button></form>'
-  +'<h2>السجل</h2><p class="hint">الوزن × العدّات</p>'
-  +(days.length?days.map(function(d){
-    return'<div class="day">'+dlabel(d.t)+'</div>'+d.ex.map(function(e){
-      return'<section class="ex"><b>'+esc(e.n)+'</b><div class="chips">'+e.s.map(function(s){
-        var a=armed===s.id;
-        return'<span class="chip'+(a?' arm':'')+'"><bdi dir="ltr">'+s.w+' × '+s.r+'</bdi><button data-act="del" data-id="'+s.id+'" aria-label="حذف">'+(a?'تأكيد الحذف':'×')+'</button></span>';
-      }).join('')+'</div></section>';
-    }).join('');
-  }).join(''):'<p class="empty">لسه ماسجلتش حاجة للعميل ده. املأ الخانات اللي فوق واضغط «سجّل».</p>')
-  +'<button class="btn ghost danger" data-act="delc">'+(armed==='c'?'اضغط تاني للتأكيد':'حذف العميل')+'</button></main>';
+  const c=cur();if(!c){view=null;return pList()}
+  app.innerHTML=top(esc(c.name),`<button class="btn ghost" data-act="back">رجوع</button>${plate(c,1)}`)+`<main class="wrap">${box()}
+<form class="card" data-form="addset"><div><label for="ex">التمرين</label><input id="ex" list="exl" autocomplete="off" maxlength="40" required value="${esc(draft.ex)}"><datalist id="exl">${exList().map(x=>`<option value="${esc(x)}">`).join('')}</datalist></div>
+<div class="two"><div><label for="w">الوزن (كجم)</label><input id="w" type="number" inputmode="decimal" step="any" min="0" required value="${esc(draft.w)}"></div><div><label for="r">العدّات</label><input id="r" type="number" inputmode="numeric" step="1" min="1" required value="${esc(draft.r)}"></div></div>
+<button class="btn" id="sv">سجّل</button></form>
+<h2>السجل</h2><p class="hint">الوزن × العدّات</p>${hist(group(sets(c)),true)}
+<h2>الدايت</h2><div class="card"><textarea id="dt" placeholder="اكتب الدايت بتاع العميل هنا">${esc(draft.diet??c.diet??'')}</textarea><button class="btn" data-act="sdiet">حفظ الدايت</button></div>
+<h2>حساب العميل</h2><div class="card"><label for="em">Gmail العميل</label><input id="em" type="email" dir="ltr" autocomplete="off" value="${esc(draft.em??c.email??'')}"><button class="btn" data-act="semail">حفظ الإيميل</button></div>
+<button class="btn ghost danger" data-act="delc">${armed==='c'?'اضغط تاني للتأكيد':'حذف العميل'}</button></main>`;
 }
 
-function exp(){
-  try{
-    var b=new Blob([JSON.stringify(db)],{type:'application/json'}),a=document.createElement('a');
-    a.href=URL.createObjectURL(b);a.download='clients-backup-'+dkey(Date.now())+'.json';
-    document.body.appendChild(a);a.click();a.remove();
-    setTimeout(function(){URL.revokeObjectURL(a.href)},2000);
-  }catch(e){note='مقدرتش أطلّع النسخة الاحتياطية من المتصفح ده.';paint()}
-}
-function flash(){var b=$('#sv');if(!b)return;b.textContent='اتسجّل';setTimeout(function(){var x=$('#sv');if(x)x.textContent='سجّل'},900)}
-
-app.addEventListener('click',function(e){
-  var b=e.target.closest('[data-act]');if(!b)return;
-  var a=b.dataset.act,id=b.dataset.id;
-  if(a==='toggle'){adding=!adding;paint()}
+app.addEventListener('click',e=>{
+  const b=e.target.closest('[data-act]');if(!b)return;
+  const a=b.dataset.act,id=b.dataset.id,c=view!==null?cur():null;
+  if(a==='login'){err='';Au.signInWithPopup(auth,new Au.GoogleAuthProvider()).catch(x=>{if(x.code!=='auth/popup-closed-by-user'&&x.code!=='auth/cancelled-popup-request'){err='تعذّر تسجيل الدخول: '+(x.code||x.message);paint()}})}
+  else if(a==='out')Au.signOut(auth);
+  else if(a==='toggle'){adding=!adding;paint()}
   else if(a==='open'){view=id;armed=null;draft={ex:'',w:'',r:''};paint();window.scrollTo(0,0)}
   else if(a==='back'){view=null;armed=null;paint()}
-  else if(a==='exp')exp();
-  else if(a==='imp')$('#imp').click();
-  else if(a==='del'){var c=cur();if(armed===id){c.sets=c.sets.filter(function(s){return s.id!==id});armed=null;save()}else armed=id;paint()}
-  else if(a==='delc'){if(armed==='c'){db.clients=db.clients.filter(function(x){return x.id!==view});view=null;armed=null;save()}else armed='c';paint()}
-});
-app.addEventListener('input',function(e){
-  var t=e.target;
-  if(t.id==='q'){q=t.value;fillList()}
-  else if(view!==null&&(t.id==='ex'||t.id==='w'||t.id==='r'))draft[t.id]=t.value;
-});
-app.addEventListener('change',function(e){
-  if(e.target.id!=='imp'||!e.target.files[0])return;
-  var r=new FileReader();
-  r.onload=function(){
-    try{
-      var d=JSON.parse(r.result);if(!d||!Array.isArray(d.clients))throw 0;
-      d.clients=d.clients.filter(function(c){return c&&c.id&&c.name}).map(function(c){c.sets=Array.isArray(c.sets)?c.sets:[];c.pi=c.pi|0;return c});
-      db=d;save();note='اتسترجعت النسخة.';
-    }catch(x){note='الملف ده مش نسخة احتياطية صحيحة.'}
+  else if(a==='del'){
+    if(armed===id){const s=c&&sets(c).find(x=>x.id===id);if(s)F.updateDoc(F.doc(db,'clients',c.id),{sets:F.arrayRemove(s)}).catch(fail);armed=null}else armed=id;
     paint();
-  };
-  r.readAsText(e.target.files[0]);
+  }
+  else if(a==='delc'){
+    if(armed==='c'){const i=view;view=null;armed=null;F.deleteDoc(F.doc(db,'clients',i)).catch(fail)}else armed='c';
+    paint();
+  }
+  else if(a==='sdiet'&&c)F.updateDoc(F.doc(db,'clients',c.id),{diet:$('#dt').value}).then(()=>{draft.diet=undefined;say('اتحفظ الدايت')}).catch(fail);
+  else if(a==='semail'&&c)F.updateDoc(F.doc(db,'clients',c.id),{email:$('#em').value.trim().toLowerCase()}).then(()=>{draft.em=undefined;say('اتحفظ الإيميل')}).catch(fail);
 });
-app.addEventListener('submit',function(e){
+app.addEventListener('input',e=>{
+  const t=e.target;
+  if(t.id==='q'){q=t.value;fillList()}
+  else if(t.id==='ex'||t.id==='w'||t.id==='r')draft[t.id]=t.value;
+  else if(t.id==='dt')draft.diet=t.value;
+  else if(t.id==='em')draft.em=t.value;
+});
+app.addEventListener('submit',e=>{
   e.preventDefault();
-  var f=e.target.dataset.form;
+  if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+  const f=e.target.dataset.form;
   if(f==='addc'){
-    var n=$('#nn').value.trim();if(!n)return;
-    var c={id:uid(),name:n,pi:db.clients.length%5,sets:[]};
-    db.clients.push(c);save();adding=false;q='';view=c.id;draft={ex:'',w:'',r:''};paint();window.scrollTo(0,0);
+    const name=$('#nn').value.trim(),em=$('#ne').value.trim().toLowerCase();if(!name)return;
+    const ref=F.doc(F.collection(db,'clients'));
+    F.setDoc(ref,{name,email:em,diet:'',sets:[],createdAt:F.serverTimestamp()}).catch(fail);
+    adding=false;q='';view=ref.id;draft={ex:'',w:'',r:''};
   }else if(f==='addset'){
-    var c2=cur(),ex=$('#ex').value.trim(),w=parseFloat($('#w').value),r=parseInt($('#r').value,10);
-    if(!c2||!ex||isNaN(w)||isNaN(r))return;
-    c2.sets.push({id:uid(),ex:ex,w:w,r:r,t:Date.now()});
-    save();armed=null;draft={ex:ex,w:String(w),r:String(r)};paint();flash();
+    const c=cur(),ex=$('#ex').value.trim(),w=parseFloat($('#w').value),r=parseInt($('#r').value,10);
+    if(!c||!ex||isNaN(w)||isNaN(r))return;
+    F.updateDoc(F.doc(db,'clients',c.id),{sets:F.arrayUnion({id:uid(),ex,w,r,t:Date.now()})}).catch(fail);
+    armed=null;draft={ex,w:String(w),r:String(r)};say('اتسجّل');
   }
 });
 paint();
